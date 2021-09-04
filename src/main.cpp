@@ -1,5 +1,6 @@
 #include <Arduino.h>
 
+#include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -51,12 +52,16 @@ void sendPushoverMessage(String title, String message) {
       if (https.begin(*client, "https://api.pushover.net/1/messages.json")) {
         log_i("[HTTPS] POST...");
         https.addHeader("Content-Type", "application/json");
-        String httpRequestData =  "{"
-                                  "\"token\":   \"" + String(apiToken) + "\"," 
-                                  "\"user\":    \"" + String(userKey) + "\"," 
-                                  "\"title\":   \"" + title + "\"," 
-                                  "\"message\": \"" + message + "\"" 
-                                  "}";
+        
+        StaticJsonDocument<250> doc;
+        doc["token"] = apiToken;
+        doc["user"] = userKey;
+        doc["title"] = title;
+        doc["message"] = message;
+
+        String httpRequestData;
+        serializeJson(doc, httpRequestData);
+
         int httpCode = https.POST(httpRequestData);
   
         if (httpCode > 0) {
