@@ -13,6 +13,7 @@ extern const uint8_t rootCACertificate[] asm("_binary_src_rootCA_pem_start");
 WiFiMulti wiFiMulti;
 
 // ********* function declarations **************
+void sendPushoverMessage(String title, String message);
 void printPushoverLicenseInformation();
 void setClock();
 void startWiFi();
@@ -29,6 +30,7 @@ void setup() {
   startWiFi();
   setClock();
   printPushoverLicenseInformation();
+  sendPushoverMessage("Workshoptage 2021", "POSTing from ESP32 😀");
 }
 
 void loop() {
@@ -37,6 +39,49 @@ void loop() {
 
 
 // ********* functions **************************
+void sendPushoverMessage(String title, String message) {
+  WiFiClientSecure *client = new WiFiClientSecure;
+  if(client) {
+    client -> setCACert((const char *)rootCACertificate);
+
+    {
+      HTTPClient https;
+  
+      log_i("[HTTPS] begin...");
+      if (https.begin(*client, "https://api.pushover.net/1/messages.json")) {
+        log_i("[HTTPS] POST...");
+        https.addHeader("Content-Type", "application/json");
+        String httpRequestData =  "{"
+                                  "\"token\":   \"" + String(apiToken) + "\"," 
+                                  "\"user\":    \"" + String(userKey) + "\"," 
+                                  "\"title\":   \"" + title + "\"," 
+                                  "\"message\": \"" + message + "\"" 
+                                  "}";
+        int httpCode = https.POST(httpRequestData);
+  
+        if (httpCode > 0) {
+          log_i("[HTTPS] POST... code: %d", httpCode);
+  
+          if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
+            log_i("%s", https.getString().c_str());
+          }
+        } else {
+          log_i("[HTTPS] POST... failed, error: %s", https.errorToString(httpCode).c_str());
+        }
+  
+        https.end();
+      } else {
+        log_i("[HTTPS] Unable to connect");
+      }
+
+    }
+  
+    delete client;
+  } else {
+    log_e("Unable to create client");
+  }
+}
+
 void printPushoverLicenseInformation() {
   WiFiClientSecure *client = new WiFiClientSecure;
   if(client) {
