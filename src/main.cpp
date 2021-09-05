@@ -6,6 +6,7 @@
 #include <WiFiClientSecure.h>
 #include <WiFiMulti.h>
 
+#include "camera.h"
 #include "config.h"
 
 // declare external variable for the linker
@@ -18,6 +19,7 @@ WiFiMulti wiFiMulti;
 // ********* function declarations **************
 void printPushoverLicenseInformation();
 void sendPushoverMessage(String title, String message);
+void sendPushoverMessageFromCam(String title, String message, camera_fb_t * fb);
 void sendPushoverMessageWithCat(String title, String message);
 void setClock();
 void startWiFi();
@@ -31,11 +33,25 @@ void setup() {
   log_w("Total PSRAM: %d", ESP.getPsramSize());
   log_e("Total heap: %d", ESP.getHeapSize());
 
+  esp_err_t err = esp_camera_init(&config);
+  if (err != ESP_OK) {
+    log_e("Camera init failed with error 0x%x", err);
+    return;
+  }
+
   startWiFi();
   setClock();
   // printPushoverLicenseInformation();
   // sendPushoverMessage("Workshoptage 2021", "POSTing from ESP32 😀");
-  sendPushoverMessageWithCat("Workshoptage 2021", "POSTing a cat from ESP32 😀");
+  // sendPushoverMessageWithCat("Workshoptage 2021", "POSTing a cat from ESP32 😀");
+
+  camera_fb_t * fb = NULL;
+  fb = esp_camera_fb_get();
+  if (!fb) {
+    log_e("Camera capture failed");
+    return;
+  }
+  sendPushoverMessageFromCam("Workshoptage 2021", "POSTing a photo from ESP32 😀", fb);
 }
 
 void loop() {
@@ -125,6 +141,93 @@ void sendPushoverMessage(String title, String message) {
         log_i("[HTTPS] Unable to connect");
       }
 
+    }
+  
+    delete client;
+  } else {
+    log_e("Unable to create client");
+  }
+}
+
+void sendPushoverMessageFromCam(String title, String message, camera_fb_t * fb) {
+  WiFiClientSecure *client = new WiFiClientSecure;
+  if(client) {
+    client -> setCACert((const char *)rootCACertificate);
+
+    String host = "api.pushover.net";
+    String path = "/1/messages.json";
+    
+    if (!client->connect(host.c_str(), 443)) {
+      log_e("Connecting to %ss failed!", host.c_str());
+    } else {
+      log_i("Connection to %s established", host.c_str());
+ 
+      String boundary = "--47110815";
+      String tokenPart = "--" + boundary  + "\r\nContent-Disposition: form-data; name=\"token\"\r\n\r\n" + apiToken  + "\r\n";
+      String userPart =  "--" + boundary  + "\r\nContent-Disposition: form-data; name=\"user\"\r\n\r\n" + userKey  + "\r\n";
+      String titlePart =  "--" + boundary  + "\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\n" + title  + "\r\n";
+      String messagePart = "--" + boundary  + "\r\nContent-Disposition: form-data; name=\"message\"\r\n\r\n" + message  + "\r\n";
+      String attachmentPartHead = "--" + boundary + "\r\nContent-Disposition: form-data; name=\"attachment\"; filename=\"photo.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n";
+      String attachmentPartTail = "\r\n--" + boundary + "--\r\n";
+
+      int attachmentSize = fb->len;
+      log_i("Attachment (i.e. photo) size is %d bytes.", attachmentSize);
+      int attachmentPartLength = attachmentPartHead.length() +
+                                 attachmentSize +
+                                 attachmentPartTail.length();
+
+      int contentLength = tokenPart.length() +
+                          userPart.length() +
+                          titlePart.length() +
+                          messagePart.length() +
+                          attachmentPartLength;
+
+      log_i("Sending HTTP headers");
+      client->print("POST " + path + " HTTP/1.1\r\n");
+      client->print("Host: " + host + "\r\n");
+      client->print("Content-Type: multipart/form-data; boundary=" + boundary + "\r\n");
+      client->print("Content-Length: " + String(contentLength) + "\r\n");
+      client->print("\r\n");
+
+      log_i("Sending HTTP body");
+      client->print(tokenPart);
+      client->print(userPart);
+      client->print(titlePart);
+      client->print(messagePart);
+      client->print(attachmentPartHead);
+
+      uint8_t *fbBuf = fb->buf;
+      size_t fbLen = fb->len;
+      for (size_t n = 0; n < fbLen; n = n + 1024) {
+        if (n + 1024 < fbLen) {
+          client->write(fbBuf, 1024);
+          fbBuf += 1024;
+        } else if (fbLen % 1024 > 0) {
+          size_t remainder = fbLen % 1024;
+          client->write(fbBuf, remainder);
+        }
+      }
+
+      client->print(attachmentPartTail);
+
+      log_i("Done sending, waiting for feedback (HTTP response headers).");
+      // response processing straight from the book
+      // https://github.com/espressif/arduino-esp32/blob/master/libraries/WiFiClientSecure/examples/WiFiClientSecure/WiFiClientSecure.ino#L83
+      while (client->connected()) {
+        String line = client->readStringUntil('\n');
+        log_i("%s", line.c_str());
+        if (line == "\r") {
+          // done with headers
+          break;
+        }
+      }
+      // If there are even more incoming bytes available from the server, read and print them char-by-char.
+      while (client->available()) {
+        char c = client->read();
+        Serial.write(c);
+      }
+
+      client->stop();
     }
   
     delete client;
