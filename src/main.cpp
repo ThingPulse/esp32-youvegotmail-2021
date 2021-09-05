@@ -52,6 +52,10 @@ void setup() {
     return;
   }
   sendPushoverMessageFromCam("Workshoptage 2021", "POSTing a photo from ESP32 😀", fb);
+
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_19, 1);
+  log_i("Going to sleep, tickle pin 19 to wake me up.");
+  esp_deep_sleep_start();
 }
 
 void loop() {
